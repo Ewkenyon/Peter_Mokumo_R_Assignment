@@ -1,0 +1,121 @@
+---
+title: "Peter_Mokumo_R_Assignment_file"
+author: "Zowe"
+date: "13/10/2019"
+output: html_document
+---
+#downloading datasets from Github
+```{r}
+download.file("https://raw.githubusercontent.com/EEOB-BioData/BCB546X-Fall2019/master/assignments/UNIX_Assignment/snp_position.txt", destfile = "./snp_position.txt")
+
+download.file("https://raw.githubusercontent.com/EEOB-BioData/BCB546X-Fall2019/master/assignments/UNIX_Assignment/fang_et_al_genotypes.txt", destfile = "./fang_et_al_genotypes.txt")
+```
+#Loading the package file, tidyverse which allows multiple loading of packages in a single step
+```{r}
+library(tidyverse)
+```
+#Loading and reading the downloaded datasets 
+```{r}
+fang <- read_tsv("./fang_et_al_genotypes.txt")
+
+snp <- read_tsv("./snp_position.txt")
+```
+
+#Data inspection
+```{r}
+#To see the dimensions of the datasets, i.e. to get information about the number of observations and variables in the datasets, as well as to print the specified number of columns and rows
+dim(fang) 
+dim(snp)
+fang[1:3, 1:3]
+snp[1:3, 1:3]
+
+#To get attribute specifications of the datasets
+str(fang) 
+str(snp)
+
+#To get summaries of the datasets
+summary(fang) 
+summary(snp)
+
+#To print the groups contained in the dataset
+unique(fang$Group)
+```
+
+#Data processing
+```{r}
+#Selecting the required columns of maize and teosinte (from the groups printed above) and transposing them such that rows become columns
+
+maize_transposed <- filter(fang,Group %in% c("ZMMLR","ZMMMR","ZMMIL")) %>% select(-JG_OTU, -Group) %>% column_to_rownames(., var = "Sample_ID") %>% t() %>% as.data.frame() %>% rownames_to_column(., var = "SNP_ID")
+
+teosinte_transposed<- filter(fang,Group %in% c("ZMPBA","ZMPIL","ZMPJA")) %>% select(-JG_OTU, -Group) %>% column_to_rownames(., var = "Sample_ID") %>% t() %>% as.data.frame() %>% rownames_to_column(., var = "SNP_ID")
+
+#Selecting the required columns from the snp dataset
+snp_formatted <- snp %>% select(SNP_ID, Chromosome, Position)
+
+#Merging the transposed maize and teosinte datasets with their respective snps
+maize_merged <- merge(snp_formatted, maize_transposed ) %>%
+  filter(., Position != "multiple",  Chromosome != "unknown")
+
+teosinte_merged <- merge(snp_formatted, teosinte_transposed) %>%
+  filter(., Position != "multiple",  Chromosome != "unknown")
+
+#Turning the merged datasets into matrices 
+maize_replaced <- maize_merged %>% as.matrix()
+teosinte_replaced <- teosinte_merged %>% as.matrix()
+
+#Replacing the required missing data with "-"for maize and "?"for teosinte
+maize_replaced[maize_replaced == "?/?"] <- "-/-"
+teosinte_replaced[teosinte_replaced == "?/?"] <- "-/-"
+
+#Using the tibble package to provide better, cleaner data formatting
+maize_replaced <- as.tibble(maize_replaced)
+teosinte_replaced <- as.tibble(teosinte_replaced)
+```
+
+#Using loops to generate the required 10 files, 1 for each chromosome,with snps ordered in both increasing and decreasing position values, for both maize and teosinte
+```{r}
+for (i in 1:10) {
+ 
+m1 <- maize_merged %>% filter(., Chromosome == i[1]) %>% arrange(.,as.numeric(Position))
+m2 <- maize_replaced %>% filter(., Chromosome == i[1]) %>% arrange(.,desc(as.numeric(Position)))
+ 
+write_tsv(m1, paste("maize_chr", i[1], "increasing.txt", sep = "_"))
+write_tsv(m2, paste("maize_chr", i[1], "decreasing.txt", sep = "_"))
+ 
+t1 <- filter(teosinte_merged, Chromosome == i[1]) %>% arrange(., as.numeric(Position))
+  t2 <- filter(teosinte_replaced, Chromosome == i[1]) %>% arrange(., desc(as.numeric(Position)))
+ 
+write_tsv(t1, paste("teosinte_chr", i[1], "_increasing.txt", sep = "_"))
+write_tsv(t2, paste("teosinte_chr", i[1], "_decreasing.txt", sep = "_"))
+}
+```
+#Data visualization per chromosome
+
+```{r}
+fang_transposed <- fang %>% select(-JG_OTU, -Group) %>% column_to_rownames(., var = "Sample_ID") %>% t() %>% as.data.frame() %>% rownames_to_column(., var = "SNP_ID")
+
+fang_merged <- merge(snp_formatted, fang_transposed) %>% filter(., Position != "multiple", Position != "unknown")
+
+ggplot(fang_merged, aes(x= as.numeric(Chromosome))) + geom_bar(aes(fill = as.character(Chromosome)))+ theme_bw()
+
+ggplot(fang_merged, aes(x= as.numeric(Position))) + geom_density(aes(fill = Chromosome)) + facet_wrap(~ Chromosome, nrow = 2, ncol = 5) + theme_bw()
+```
+#Additional analysis and visualization
+```{r}
+tidy_fang <- fang %>% select(-JG_OTU) %>%
+  pivot_longer( -Sample_ID:-Group, names_to = "SNP_ID", values_to = "Sequence")
+
+tidy_fang <- tidy_fang %>%
+  mutate(new_sequence = ifelse(Sequence %in% c("A/A","T/T","C/C","G/G"), "Homozygous",
+  ifelse(Sequence == "?/?", "Missing","Heterozygous")))
+
+ggplot(tidy_fang, aes(x = Sample_ID, fill = new_sequence)) +
+  geom_bar(position = "fill") + theme_bw()
+
+ggplot(tidy_fang, aes(x = Group , fill = new_sequence)) + geom_bar(position = "fill") +
+  theme_bw() + theme(axis.text.x = element_text(angle = 90))
+
+#My own visualization of the data
+ggplot(filter(tidy_fang, Sequence != "?/?") , aes(x = Sample_ID, fill = Sequence)) +
+  geom_bar(position = "fill") + theme_bw()
+```
